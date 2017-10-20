@@ -44,7 +44,7 @@ def course_scheduler(course_descriptions, goal_conditions, initial_state):
         usable_courses.append(CourseUsable(course, False))
     # Call the internal planner
     plan = dfs_recursive(course_descriptions, goal_conditions, usable_courses, [], 0)
-    print_schedule(plan)
+    print_schedule(course_descriptions, plan)
     # Transform internal structure back to what the caller requires
     course_dict = {}
     for operator in plan:
@@ -174,17 +174,14 @@ def operator_possible(course_descriptions, current_plan, next_operator):
         return False
 
     # Don't schedule a course in the same semester as its direct prerequisites or before them
-    # Don't schedule a course whose effect is a prerequisite of a course before it
+    # Don't schedule a course whose effect is a prerequisite of a course scheduled before it
     # Higher level requirements don't count
-    if not is_higher_level_course(course_descriptions, next_operator.effect):
+    if not is_higher_level_operator(next_operator):
         for operator in current_plan:
-            if operator.scheduledterm <= next_operator.scheduledterm and not \
-                    is_higher_level_course(course_descriptions, operator.effect) and next_operator.effect \
-                    in operator.pre:
-                return False
-            if operator.scheduledterm >= \
-                    next_operator.scheduledterm and not is_higher_level_course(course_descriptions, operator.effect) \
-                    and operator.effect in next_operator.pre:
+            if is_higher_level_operator(operator):
+                continue
+            if operator.scheduledterm <= next_operator.scheduledterm and next_operator.effect in operator.pre or \
+                operator.scheduledterm >= next_operator.scheduledterm and operator.effect in next_operator.pre:
                 return False
 
     # The operator has passed
@@ -211,16 +208,17 @@ def minimum_requirement_tree_height(course_descriptions, dnf_clause, current_pla
 
 
 def is_higher_level_course(course_descriptions, course):
-    try:
-        # Higher level reqs don't have course numbers, just names
+    if course is Course:
         return int(course_descriptions[course].credits) == 0
-    except AttributeError:  # I messed up and forgot to convert a tuple into a namedtuple somewhere :(
-        return is_higher_level_course(course_descriptions, Course(*course))
-    except ValueError:
-        return True
+    else:  # I messed up and forgot to convert a tuple into a namedtuple somewhere :(
+        return int(course_descriptions[Course(*course)].credits) == 0
 
 
-def print_schedule(plan):
+def is_higher_level_operator(operator):
+    return operator.credits == '0'
+
+
+def print_schedule(course_descriptions, plan):
     schedule = {}
     for term in ScheduledTerm:
         schedule[term] = []
@@ -233,7 +231,7 @@ def print_schedule(plan):
         print(term, hours, " [", end='')
         for operator in schedule[term]:
             # TODO: fix this
-            if not is_higher_level_course(COURSE_DICT, operator.effect):
+            if not is_higher_level_course(course_descriptions, operator.effect):
                 print(operator, ",", end='')
         print("]")
 
