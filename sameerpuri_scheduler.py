@@ -5,13 +5,13 @@ from enum import Enum
 from more_itertools import unique_everseen
 from functools import total_ordering
 
-
 Course = namedtuple('Course', 'program, designation')
 
 # Prerequisites are in disjunctive normal form ([course and course and course] or [course and course])
 CourseInfo = namedtuple('CourseInfo', 'credits, terms, prereqs')
 
 CourseUsable = namedtuple('CourseUsable', 'course, used')
+
 
 @total_ordering
 class ScheduledTerm(Enum):
@@ -38,42 +38,47 @@ ScheduledCourse = namedtuple('ScheduledCourse', 'course, scheduledterm')
 
 
 def course_scheduler(course_descriptions, goal_conditions, initial_state):
+    # Transform initial_state into a list of usable courses
     usable_courses = list()
     for course in initial_state:
-        usable_courses.append(CourseUsable(course, True))
+        usable_courses.append(CourseUsable(course, False))
+    # Call the internal planner
     plan = dfs_recursive(course_descriptions, goal_conditions, usable_courses, [], 0)
     print_schedule(plan)
+    # Transform internal structure back to what the caller requires
     course_dict = {}
     for operator in plan:
         course_dict[ScheduledCourse(operator.effect, operator.scheduledterm)] = course_descriptions[operator.effect]
     return course_dict
 
 
-def dfs_recursive(course_descriptions, goal_conditions, usable_courses, current_plan, depth):
-    goal_conditions = list(unique_everseen(goal_conditions))  # Remove goal duplicates
+def dfs_recursive(course_descriptions, goal_conditions, initial_state, current_plan, depth):
+    goal_conditions = list(unique_everseen(goal_conditions))  # Remove duplicate goals
     # TODO: figure out what the requirement should be for this
     # TODO: how can I better handle what initial_state provides to head towards that state?
     # TODO: how can I deal with the consequence of my actions?
     # TODO: how can I handle requirements with < 12 hours in a semester? It would recurse infinitely
-    # goal_conditions = remove_fulfilled_goals(goal_conditions, current_plan)  # Get rid of any fulfilled goals
-    # Don't try to satisfy goals fulfilled by the initial state. If a match is found, remove it from initial_state too
-    # goal_conditions = remove_already_fulfilled_goals(goal_conditions, initial_state)
-    # goal_conditions = sorted(goal_conditions, key=lambda x: minimum_requirement_tree_height(course_descriptions, x))
-    # Goal conditions satisfied: are the goal conditions empty or equal to the initial state?
 
+    # Goal conditions satisfied: are the goal conditions empty?
     if len(goal_conditions) == 0:
         # if the plan isn't valid, the caller should be told
         if is_valid_plan(current_plan):
             return current_plan
         return ()
 
-    # Use the first item in the goal_conditions list as the goal
+    # Use the first item in the goal_conditions list as the current goal
     goal = goal_conditions[0]
 
-    # These are the requirements for the goal in DNF form
+    # Requirements for the goal in DNF form
     dnf_requirements = course_descriptions[goal].prereqs
     if len(dnf_requirements) == 0:  # If there aren't any requirements, assume an empty requirement case
         dnf_requirements = [[]]
+    # Sort the requirement clauses so the ones that are hardest to fulfill are handled first
+    # These requirements are definitive of the course schedule (i.e. CS math), while others are small and highly
+    # variable (i.e. CS openelectives)
+    dnf_requirements = sorted(dnf_requirements,
+                              key=lambda clause:
+                              -minimum_requirement_tree_height(course_descriptions, clause, current_plan))
     for dnf_clause in dnf_requirements:  # Try to fulfill each clause. The first clause that works is used.
         # Transform the list to match the namedtuple Course, just in case
         dnf_transformed_clause = list()
@@ -81,50 +86,53 @@ def dfs_recursive(course_descriptions, goal_conditions, usable_courses, current_
             dnf_transformed_clause.append(Course(*req))
         dnf_clause = dnf_transformed_clause
 
+        # The requirements for non-higher-level courses should be met
         revised_dnf_clause = (dnf_clause[:] if is_higher_level_course(course_descriptions, goal)
                               else remove_fulfilled_goals(dnf_clause[:], current_plan))
-
+        # Try to use courses from the initial state to fulfill this clause
         used_courses = list()
-        # for course in usable_courses:
-        #     if course.course not in revised_dnf_clause:
-        #         continue
-        #     if is_higher_level_course(course_descriptions, goal):
-        #         if not course.used:
-        #             course.used = True
-        #             revised_dnf_clause.remove(course.course)
-        #             used_courses.append(course.course)
-        #     else:
-        #         revised_dnf_clause.remove(course.course)
+        for i, usable_course in enumerate(initial_state[:]):
+            if usable_course.course not in revised_dnf_clause:
+                continue
+            if is_higher_level_course(course_descriptions, goal):
+                if not usable_course.used:  # For higher-level requirements, a usable course must be consumed
+                    initial_state[i] = CourseUsable(usable_course.course, True)
+                    revised_dnf_clause.remove(usable_course.course)
+                    used_courses.append(usable_course.course)
+            else:  # For non-higher-level requirements, a satisfied course means just eliminate it
+                revised_dnf_clause.remove(usable_course.course)
 
+        # Remove the goal and put in its prerequisites
         next_goal_conditions = (revised_dnf_clause + goal_conditions)
-        next_goal_conditions.remove(goal)          # put in its prerequisites
+        next_goal_conditions.remove(goal)
 
-        minimum_semesters_before = minimum_requirement_tree_height(course_descriptions, goal)
+        # Calculate the minimum semesters required
+        minimum_semesters_before = minimum_requirement_tree_height(course_descriptions, revised_dnf_clause,
+                                                                   current_plan)
 
-        # Try to schedule the goal in each term, starting from the first term if there are no prerequisites
-        # and the last if there are any
-        for term in ScheduledTerm if len(revised_dnf_clause) == 0 else reversed(ScheduledTerm):
-            if len(revised_dnf_clause) > 0 and not is_higher_level_course(course_descriptions, goal) and minimum_semesters_before >= term:
-                break
-
+        # Try to schedule the goal in each possible term
+        terms_to_look_at = []
+        for i in range(minimum_semesters_before + 1, 9):
+            terms_to_look_at.append(ScheduledTerm(i))
+        if is_higher_level_course(course_descriptions, goal):  # Higher level reqs should be looked at in reverse
+            terms_to_look_at = reversed(terms_to_look_at)
+        for term in terms_to_look_at:
             # Formalize the operator we're trying to use here
             next_operator = CourseOperator(dnf_clause, goal, term, course_descriptions[goal].credits)
             # Series of sanity checks and limitations to make sure the operator is actually *possible*
-            if operator_possible(course_descriptions, usable_courses, current_plan, next_operator):
-                next_plan = current_plan[:]  # Clone the current plan and add the potential next operator
-                next_plan.append(next_operator)
-
+            if operator_possible(course_descriptions, current_plan, next_operator):
+                next_plan = current_plan
+                next_plan.append(next_operator)  # Add the potential next operator
                 # Ask the dfs to do the rest of the work :)
-                result_plan = dfs_recursive(course_descriptions, next_goal_conditions, usable_courses, next_plan,
+                result_plan = dfs_recursive(course_descriptions, next_goal_conditions, initial_state, next_plan,
                                             depth + 1)
                 if len(result_plan) != 0:  # If next_operator is a success, just go back up
                     return result_plan
-        for course in used_courses:
-            usable_courses.append(CourseUsable(course, True))
-                # Otherwise we try the remaining variations of the next operator
+                next_plan.remove(next_operator)  # Or just remove the operator
+        # All iterations failed, reset all the used_courses
+        for usable_course in used_courses:
+            initial_state[initial_state.index(initial_state)] = CourseUsable(usable_course.course, False)
     # This goal is impossible to satisfy, let the caller know
-    # print("Failed with goal", depth, goal)
-    # print_schedule(current_plan)
     return ()
 
 
@@ -140,13 +148,6 @@ def is_valid_plan(current_plan):
     return True
 
 
-def remove_fulfilled_by_initial(initial_state, goal_conditions):
-    for course in initial_state:
-        if course in goal_conditions:
-            goal_conditions.remove(course)
-    return goal_conditions
-
-
 def remove_fulfilled_goals(goal_conditions, current_plan):
     for operator in current_plan:
         if operator.effect in goal_conditions:
@@ -154,7 +155,7 @@ def remove_fulfilled_goals(goal_conditions, current_plan):
     return goal_conditions
 
 
-def operator_possible(course_descriptions, initial_state, current_plan, next_operator):
+def operator_possible(course_descriptions, current_plan, next_operator):
     # Is the course available in the term next_operator schedules it for?
     if not next_operator.scheduledterm.name.split("_")[0] in course_descriptions[next_operator.effect].terms:
         return False
@@ -172,63 +173,48 @@ def operator_possible(course_descriptions, initial_state, current_plan, next_ope
     if hours_in_term > 18:  # Too many hours in term
         return False
 
-    # Don't even bother trying to schedule a course with prerequisites freshman year
-    # that can't be satisfied by the initial state
-    next_info = course_descriptions[next_operator.effect]
-    if next_operator.scheduledterm == ScheduledTerm.Fall_Frosh and len(next_info.prereqs) != 0:
-        is_fulfilled = False
-        for prereq in next_info.prereqs:
-            if set(prereq).issubset(initial_state):
-                is_fulfilled = True
-                break
-        if not is_fulfilled:
-            return False
-
     # Don't schedule a course in the same semester as its direct prerequisites or before them
+    # Don't schedule a course whose effect is a prerequisite of a course before it
     # Higher level requirements don't count
     if not is_higher_level_course(course_descriptions, next_operator.effect):
-        if Course(designation='1301', program='MATH') in next_operator.pre:
-            print("Checking it", next_operator)
         for operator in current_plan:
             if operator.scheduledterm <= next_operator.scheduledterm and not \
                     is_higher_level_course(course_descriptions, operator.effect) and next_operator.effect \
                     in operator.pre:
                 return False
-            if operator.scheduledterm >= next_operator.scheduledterm and not is_higher_level_course(course_descriptions, operator.effect) and operator.effect in next_operator.pre:
+            if operator.scheduledterm >= \
+                    next_operator.scheduledterm and not is_higher_level_course(course_descriptions, operator.effect) \
+                    and operator.effect in next_operator.pre:
                 return False
-        if Course(designation='1301', program='MATH') in next_operator.pre:
-            print("ohno", current_plan)
 
     # The operator has passed
     return True
 
 
-memotable = {}
-
-
-def minimum_requirement_tree_height(course_descriptions, course):
-    if course in memotable:
-        return memotable[course]
-    if is_higher_level_course(course_descriptions, course):
-        return 100
-    dnf_clauses = course_descriptions[course].prereqs
-    if len(dnf_clauses) == 0:
+def minimum_requirement_tree_height(course_descriptions, dnf_clause, current_plan):  # maximin
+    if len(dnf_clause) == 0:
         return 0
 
-    minimum = 0
-    for dnf_clause in dnf_clauses:
-        for req in dnf_clause:
-            sz = 1 + minimum_requirement_tree_height(course_descriptions, req)
-            if sz < minimum:
-                minimum = sz
-    memotable[course] = minimum
-    return minimum
+    maximum = 0
+    for req in dnf_clause:  # dnf_clause was selected, find the tree length required for it to be fulfilled, (max)
+        lmin = 0
+        req = Course(*req)
+        if req in current_plan:
+            continue
+        for clause in course_descriptions[req].prereqs:  # find the length of the smallest clause for req
+            sz = 1 + minimum_requirement_tree_height(course_descriptions, clause, current_plan)
+            if sz < lmin:
+                lmin = sz
+        if lmin > maximum:
+            maximum = lmin
+    return maximum
 
 
 def is_higher_level_course(course_descriptions, course):
     try:
+        # Higher level reqs don't have course numbers, just names
         return int(course_descriptions[course].credits) == 0
-    except AttributeError:  # I messed up and forgot to convert a tuple into a namedtuple :(
+    except AttributeError:  # I messed up and forgot to convert a tuple into a namedtuple somewhere :(
         return is_higher_level_course(course_descriptions, Course(*course))
     except ValueError:
         return True
@@ -254,8 +240,7 @@ def print_schedule(plan):
 
 COURSE_DICT = cd.create_course_dict()
 
-
-INITIAL_STATE = [Course('CS', '1101')]  # The student has done nothing so far
-GOAL_CONDITIONS = [Course('CS', 'major')] #[Course('CS', 'mathematics'), ('CS', 'core'), ('MATH', '3641'), ('CS', '1151'), ('MATH', '2410')]  # But the student wants a CS Major
+INITIAL_STATE = [Course('CS', '1101')]
+GOAL_CONDITIONS = [Course('CS', 'mathematics'), ('CS', 'core'), ('MATH', '3641'), ('CS', '1151'), ('MATH', '2410')]
 
 print(course_scheduler(COURSE_DICT, GOAL_CONDITIONS, INITIAL_STATE))
