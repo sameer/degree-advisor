@@ -238,7 +238,7 @@ def print_schedule(course_descriptions, plan):
 
 COURSE_DICT = cd.create_course_dict()
 
-INITIAL_STATE = [Course('CS', '1101')]
-GOAL_CONDITIONS = [Course('CS', 'mathematics'), ('CS', 'core'), ('MATH', '3641'), ('CS', '1151'), ('MATH', '2410')]
+INITIAL_STATE = [('CS', '1101')]
+GOAL_CONDITIONS = [('CS', 'mathematics'), ('CS', 'core'), ('MATH', '3641'), ('CS', '1151'), ('MATH', '2410')]
 
 print(course_scheduler(COURSE_DICT, GOAL_CONDITIONS, INITIAL_STATE))
