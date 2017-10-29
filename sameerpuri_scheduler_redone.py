@@ -61,35 +61,36 @@ class Term:
 
 
 class ScheduledCourse:
-    def __init__(self, course, courseInfo, term: Term):
+    def __init__(self, course, courseInfo, term: Term, clause: List[Course]):
         self.course = course
         self.courseInfo = courseInfo
         self.term = term
+        self.clause = clause
 
     def __hash__(self):
-        return hash((self.course, self.term))
+        return hash((self.course, self.term, self.clause))
 
     def __eq__(self, other):
-        return other and self.course == other.course and self.term == other.term
+        return other and self.course == other.course and self.term == other.term and self.clause == other.clause
 
     def __ne__(self, other):
         return not self.__eq__(other)
 
     def __repr__(self):
         # return "<ScheduledCourse course:%s term:%s>" % (self.course, self.term)
-        return "(%s, %s)" % (self.course, self.term)
+        return "(%s, %s, %s)" % (self.course, self.term, self.clause)
 
     def __str__(self):
-        return "course is %s, term is %s" % (self.course, self.term)
+        return "course is %s, term is %s, pre is %s" % (self.course, self.term, self.clause)
 
 
 def course_scheduler(course_descriptions: Dict[Course, CourseInfo], goal_conditions: List[Course], initial_state: List[Course]):
     # Run the internal scheduler, considering the initial state as part of an already scheduled plan
-    result_plan = internal_scheduler(course_descriptions, goal_conditions, list(map(lambda course: ScheduledCourse(course, course_descriptions[course], Term(Semester.Summer, Year.Frosh)), initial_state)), {})
+    result_plan = internal_scheduler(course_descriptions, goal_conditions, list(map(lambda course: ScheduledCourse(course, course_descriptions[course], Term(Semester.Summer, Year.Frosh), []), initial_state)), {})
     result_plan = list(filter(lambda sc: sc.term != Term(Semester.Summer, Year.Frosh), result_plan))
     push_higher_levels(course_descriptions, result_plan)
     print_schedule(result_plan)
-    course_dict = {operator.course: CourseInfo(operator.courseInfo.credits, (operator.term.semester.name, operator.term.year.name), operator.courseInfo.prereqs) for operator in result_plan}
+    course_dict = {operator.course: CourseInfo(operator.courseInfo.credits, (operator.term.semester.name, operator.term.year.name), operator.clause) for operator in result_plan}
     return course_dict
 
 
@@ -107,6 +108,7 @@ def internal_scheduler(course_descriptions: Dict[Course, CourseInfo], goal_condi
     min_height = minimum_tree_height(course_descriptions, goal, initial_state, memo)
 
     hours_per_term = get_hour_counts(current_plan)
+    print("HERE", goal)
 
     for term in (map(lambda i: height_to_term(i), range(min_height, 9)) if not is_higher_level_course_info(goal_info) else [Term(Semester.Spring, Year.Senior)]):
         if int(goal_info.credits) + hours_per_term[term] > 18:  # Too many hours
@@ -121,20 +123,29 @@ def internal_scheduler(course_descriptions: Dict[Course, CourseInfo], goal_condi
                 if is_higher_level_course_info(op.courseInfo):
                     continue
                 # Don't schedule at or after a user of the course
-                if term >= op.term and goal in op.courseInfo.prereqs:
-                    violates_another = True
-                    break
-                # Don't schedule before or at prereqs
-                if op.term >= term and op.course in goal_info.prereqs:
+                if term >= op.term and goal in op.clause:
                     violates_another = True
                     break
             if violates_another:
                 continue
         # Now we know scheduling the course is definitely possible...
-        next_operation = ScheduledCourse(goal, goal_info, term)
+        next_operation = ScheduledCourse(goal, goal_info, term, [])
         next_plan = current_plan[:]
         next_plan.append(next_operation)
         for dnf_clause in (goal_info.prereqs if len(goal_info.prereqs) != 0 else [[]]):
+            if not is_higher_level_course_info(goal_info):
+                violates_another = False
+                for op in current_plan:
+                    if is_higher_level_course_info(op.courseInfo):
+                        continue
+                    # Don't schedule before or at prereqs
+                    if op.term >= term and op.course in dnf_clause:
+                        violates_another = True
+                        break
+                if violates_another:
+                    continue
+
+            next_operation.clause = dnf_clause
             dnf_clause = list(dnf_clause)
             next_goal_conditions = goal_conditions[:]
             next_goal_conditions.remove(goal)
