@@ -1,339 +1,368 @@
 #!/bin/python
-import course_dictionary as cd
+# Sameer Puri
+# I received help from Guimin in seeing ways that I might implement a heuristic.
+
+# The scheduler I wrote in python 3.6.2 uses a heuristic depth first search to try to find a valid schedule. It reasons
+# in terms of taken courses as "operators" that are placed in a plan. The courses in the initial state are placed in the
+# plan as though they were courses taken in the summer before freshman year. On each recursive call, the scheduler tries
+# to achieve the first goal in goal_conditions (goal_conditions[0]). It iterates through each combo of term and
+# prerequisite clause possible, ignoring terms that don't make sense. Once it finds a valid combination, it adds it to
+# the current plan and does a further recursive call, replacing goal_conditions[0] with its current clause.
+# Somewhere down the line, if a goal cannot be scheduled in any term, the course we initially tried has failed and the
+# recursion stack unwinds one by one, trying the next combo of term and prerequisite clause for the current goal until
+# and doing a recursive call again.
+
+# A heuristic of the "minimum requirement tree height" is used. This is the minimum number of semesters a course needs
+# for it and its prerequisites to be scheduled, given the initial state. This is used to limit the terms that are
+# evaluated in term and prereq clause combinations. A variation on the heuristic is also employed where the instead of
+# the initial state, the current plan is used. This is used to sort the prereqs of a goal so that those clauses that are
+# heuristically "closest" are tried first. It is also used to sort the requirements inside of a clause so that the
+# hardest ones are placed first.
+
+# I used the tests from Brian Gauch's autograder to evaluate my scheduler. Test cases 1 through 4 succeeded, but I
+# encountered some technical difficulties with how the grader evaluated by solution output. In some cases, it could
+# not read my solution properly so it thought that the number of courses in a semester was incorrect. For instance,
+# with test case 4, it seems to get confused in parsing my solution and thinks there are only 3 or 4 courses in my
+# solution when the file itself clearly shows otherwise. I couldn't get test cases 5 and 6 to function properly; they
+# continue to make my code time out in trying to find a solution. I have tried my hardest to figure out why it recurses
+# infinitely, but I cannot find any good explanation other than there are too many open electives that it has to handle
+# so it takes ages. I am certain there isn't a solution for test case 5, so it should return the empty set, and that
+# there is a solution for test case 6.
+
+# Thank you for reading, sorry if that was a bit lengthy. :)
+
+from collections import namedtuple
 from enum import IntEnum
-from functools import total_ordering
-from typing import Dict, List, NamedTuple, Tuple
+from typing import Dict, List
+
+# Some classes useful to the scheduler
+Course = namedtuple('Course', 'program, designation')
+CourseInfo = namedtuple('CourseInfo', 'credits, terms, prereqs')
 
 
-class Course(NamedTuple):
-    program: str
-    designation: str
+class Semester(IntEnum):
+    Fall = 1
+    Spring = 2
+    Summer = 3
 
 
-# Prerequisites are in DNF ([course and course and course] or [course and course])
-class CourseInfo(NamedTuple):
-    credits: int
-    terms: Tuple[str]
-    prereqs: Tuple[Tuple[Course]]
+class Year(IntEnum):
+    Frosh = 0
+    Sophomore = 1
+    Junior = 2
+    Senior = 3
 
 
-class CourseUsable(NamedTuple):
-    course: Course
-    taken: bool
+class Term:
 
+    def __init__(self, semester, year):
+        self.semester = semester
+        self.year = year
+        semesterNo = Semester(semester)
+        yearNo = Year(year)
+        self.termNo = int(yearNo) * 3 + int(semesterNo)
 
-class CourseHLCheck(NamedTuple):
-    course: Course
-    directlyfromhlreq: bool
+    # Basically a second constructor
+    @classmethod
+    def initFromTermNo(clazz, termNo):
+        # intentional integer division
+        yearNo = int(int(termNo - 1) / int(3))
+        semesterNo = termNo - (3 * yearNo)
+        semester = Semester(semesterNo)
+        year = Year(yearNo)
+        return clazz(semester, year)
+
+    def __hash__(self):
+        return hash(self.termNo)
 
     def __eq__(self, other):
-        return self.course == other.course
+        return other and self.termNo == other.termNo
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __ge__(self, other):  # Define ge
+        return self.termNo >= other.termNo
+
+    def __repr__(self):
+        # return "<Term semester:%s year:%s>" % (self.semester, self.year)
+        return "(%s, %s)" % (self.semester, self.year)
+
+    def __str__(self):
+        # return "From str method of Term: semester is %s, year is %s" %
+        # (self.semester, self.year)
+        return "(%s, %s)" % (self.semester, self.year)
 
 
-@total_ordering
-class ScheduledTerm(IntEnum):
-    Fall_Frosh: int = 1
-    Spring_Frosh: int = 2
-    Fall_Sophomore: int = 3
-    Spring_Sophomore: int = 4
-    Fall_Junior: int = 5
-    Spring_Junior: int = 6
-    Fall_Senior: int = 7
-    Spring_Senior: int = 8
+class ScheduledCourse:
+
+    def __init__(self, course, courseInfo, term: Term, clause: List[Course]):
+        self.course = course
+        self.courseInfo = courseInfo
+        self.term = term
+        self.clause = clause
+
+    def __hash__(self):
+        return hash((self.course, self.term, self.clause))
+
+    def __eq__(self, other):
+        return other and self.course == other.course and self.term == other.term and self.clause == other.clause
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __repr__(self):
+        # return "<ScheduledCourse course:%s term:%s>" % (self.course,
+        # self.term)
+        return "(%s, %s, %s)" % (self.course, self.term, self.clause)
+
+    def __str__(self):
+        return "course is %s, term is %s, pre is %s" % (self.course, self.term, self.clause)
 
 
-class CourseOperator(NamedTuple):
-    pre: List[Course]
-    effect: Course
-    scheduledterm: ScheduledTerm
-    credits: int
-    used: bool
-
-
-class ScheduledCourse(NamedTuple):
-    course: Course
-    courseInfo: CourseInfo
-    term: Tuple
-
-
-def uniquify(seq):
-    seen = set()
-    seen_add = seen.add
-    return [x for x in seq if not (x in seen or seen_add(x))]
-
-
-def course_scheduler(course_descriptions: Dict[Course, CourseInfo], goal_conditions: List[Course],
-                     initial_state: List[Course]):
-    # Transform initial_state into a list of usable courses
-    usable_courses = list(map(lambda i: CourseUsable(i, False), initial_state))
-    # Remove duplicate goals
-    goal_conditions = uniquify(goal_conditions)
-    # Call the internal planner
-    plan = dfs_recursive(course_descriptions, list(map(lambda goal: CourseHLCheck(goal, is_higher_level_course(course_descriptions, goal)), goal_conditions)), usable_courses)
-    # Schedule higher level requirements in the semester that they are fulfilled
-    push_higher_levels(course_descriptions, plan)
-    # Transform internal structure back to what the caller requires
-    # TODO: fix < 12 hour handling to pad courses
-    course_dict = {operator.effect: (operator.credits, (operator.scheduledterm.name.split("_")[0], operator.scheduledterm.name.split("_")[1]), operator.pre) for operator in plan}
-    print_schedule(course_descriptions, plan)
+def course_scheduler(course_descriptions: Dict[Course, CourseInfo], goal_conditions: List[Course], initial_state: List[Course]):
+    # Strip the goal conditions of the class object because it messes up the
+    # program output to solutions.txt
+    stripped_goal_conditions = [(g.program, g.designation)
+                                for g in goal_conditions]
+    # Run the internal scheduler, considering the initial state as part of an
+    # already scheduled plan
+    result_plan = internal_scheduler(course_descriptions, stripped_goal_conditions, list(
+        map(lambda course: ScheduledCourse(course, course_descriptions[course], Term(Semester.Summer, Year.Frosh), []), initial_state)), {})
+    # Filter out the initial state that was passed to the scheduler
+    result_plan = list(
+        filter(lambda sc: sc.term != Term(Semester.Summer, Year.Frosh), result_plan))
+    # Push higher level requirements down to the semester in which they are
+    # fulfilled
+    push_higher_levels(result_plan)
+    # Pads semesters below 12 hours to 12 hours.
+    result_plan = pad_to_12_hours(course_descriptions, result_plan)
+    # Restructure the plan to match the specification
+    course_dict = {operator.course: CourseInfo(operator.courseInfo.credits, (
+        operator.term.semester.name, operator.term.year.name), operator.courseInfo.prereqs) for operator in result_plan}
+    # Done!
     return course_dict
 
 
-def dfs_recursive(course_descriptions: Dict[Course, CourseInfo], goal_conditions: List[CourseHLCheck],
-                  initial_state: List[CourseUsable], current_plan: List[CourseOperator] = list(), depth: int = 0):
-    # Are the goal conditions empty?
-    if len(goal_conditions) == 0:
-        if is_valid_plan(current_plan):
+def internal_scheduler(course_descriptions: Dict[Course, CourseInfo], goal_conditions: List[Course], current_plan: List[ScheduledCourse], memo_table_for_tree_height: Dict[Course, int]):
+    if len(goal_conditions) == 0:  # There's nothing left to do!
+        if is_valid_plan(current_plan):  # If it's valid, return the plan, else return a failure
             return current_plan
-        # if the plan isn't valid, the caller should be told
-        return ()
-
-    # Use the first item in the goal_conditions list as the current goal
-    goal = goal_conditions[0]
-
-    # Someone has already used this goal. This means it shouldn't even be tried.
-    # TODO: fix this
-    # if goal in map(lambda op: op.effect, current_plan):
-    #     print("Goal already taken", goal)
-    #     return ()
-
-    # Requirements for the current goal in DNF form
-    dnf_requirements = course_descriptions[goal.course].prereqs
-    if len(dnf_requirements) == 0:  # If there aren't any requirements, it is an empty requirement case
-        dnf_requirements = [[]]
-    # Sort the requirement clauses so those that are easiest to fulfill are tried first
-    dnf_requirements = sorted(dnf_requirements,
-                              key=lambda clause:
-                              heuristic_distance(course_descriptions, clause, initial_state, goal_conditions, current_plan))
-    for dnf_clause in dnf_requirements:  # Try each clause. The first clause that works is used.
-        dnf_clause = list(dnf_clause)
-        # The requirements for non-higher-level courses can be automatically met
-        revised_dnf_clause = (
-            dnf_clause[:] if is_higher_level_course(course_descriptions, goal.course) else remove_fulfilled_goals(
-                dnf_clause[:],
-                current_plan))
-
-        # Try to use courses from the initial state to fulfill this clause. If a higher level requirement uses the
-        # course, it is "taken".
-        used_courses = []
-        for i, usable_course in enumerate(initial_state):
-            if usable_course.course not in revised_dnf_clause:
-                continue
-            if is_higher_level_course(course_descriptions, goal.course):
-                if not usable_course.taken:  # For higher-level requirements, a usable course must be consumed
-                    initial_state[i] = CourseUsable(usable_course.course, True)
-                    revised_dnf_clause.remove(usable_course.course)
-                    used_courses.append(usable_course)
-            else:  # For non-higher-level requirements, a satisfied course means just eliminate it
-                revised_dnf_clause.remove(usable_course.course)
-
-        # Try to use courses from the current plan that weren't already used by another higher level requirement
-        used_ops = []
-        for i, op in enumerate(current_plan):
-            if op.effect not in revised_dnf_clause:
-                continue
-            if not goal.directlyfromhlreq and is_higher_level_course(course_descriptions, goal.course):
-                # We are currently looking at a higher level course that wants to consume courses from the current
-                # plan that were filled in by a string of normal courses
-                if not op.used:  # Consume if not used
-                    op = op._replace(used=True)
-                    current_plan[i] = op
-                    used_ops.append(op)
-                    revised_dnf_clause.remove(op.effect)
-                    print("Marking", op, "used by", goal)
-            else:
-                revised_dnf_clause.remove(op.effect)
-
-        # Sort the revised clause members so the longest to fulfill parts are tried first
-        # These parts are definitive of the course schedule (i.e. CS math), while others are small and highly
-        # variable (i.e. CS openelectives)
-        revised_dnf_clause = sorted(revised_dnf_clause, key=lambda course: -minimum_requirement_tree_height(course_descriptions, [course]))
-
-        # Convert the clause into the goal conditions format, based upon whether the current goal is a higher level
-        # course or not
-        revised_dnf_clause = list(map(lambda course: CourseHLCheck(course, is_higher_level_course(course_descriptions, goal.course)), revised_dnf_clause))
-
-        # Remove the current goal and insert its prerequisites at the front of next goal conditions
-        next_goal_conditions = (revised_dnf_clause + goal_conditions)
-        next_goal_conditions.remove(goal)
-
-        # Calculate the minimum semesters required
-        minimum_semesters_before = 0 if len(dnf_clause) == 0 else 1 + minimum_requirement_tree_height(course_descriptions, dnf_clause)
-        print("Depth for", goal, minimum_semesters_before, "with", dnf_clause)
-
-        if is_higher_level_course(course_descriptions, goal.course):  # Higher lvl req scheduling doesn't really matter.
-            terms_to_look_at = [ScheduledTerm.Spring_Senior]   # just figure them out later
         else:
-            # Try to schedule the course in each possible term, ordered by what's the best
-            terms_to_look_at = list(i for i in ScheduledTerm)
-            terms_to_look_at = sorted(terms_to_look_at,
-                                      key=lambda t: (minimum_semesters_before - t.value) if (minimum_semesters_before + 1 - t.value) > 0 else abs(minimum_semesters_before - t.value) - 1)
-        print("considering term order", terms_to_look_at)
-        for term in terms_to_look_at:
-            # Formalize the operator we're trying to use here
-            next_operator = CourseOperator(dnf_clause, goal.course, term, course_descriptions[goal.course].credits, used=goal.directlyfromhlreq)
-            # Series of sanity checks and limitations to make sure the operator is actually *possible*
-            if operator_possible(course_descriptions, current_plan, next_operator):
-                next_plan = current_plan
-                next_plan.append(next_operator)  # Add the potential next operator
-                # Ask the dfs to do the rest of the work :)
-                print("Trying", next_operator, "WITH GOALS", next_goal_conditions)
-                result_plan = dfs_recursive(course_descriptions, next_goal_conditions, initial_state, next_plan,
-                                            depth + 1)
-                if len(result_plan) != 0:  # If next_operator is a success, just go back up
-                    return result_plan
-                next_plan.remove(next_operator)  # Or just remove the operator
-                print("That semester failed", goal)
-        print("Next dnf clause", goal)
-        # All iterations failed, reset all the used_courses
-        for usable_course in used_courses:
-            if usable_course in initial_state:
-                initial_state[initial_state.index(usable_course)] = CourseUsable(usable_course.course, False)
-            else:
-                initial_state.append(CourseUsable(usable_course.course, False))
-        for op in used_ops:
-            current_plan[current_plan.index(op)] = op._replace(used=False)
-        if len(dnf_clause) == 0: # We failued with no prereqs, no go
-            break
-    print("Overall failure", goal)
-    print_schedule(course_descriptions, current_plan)
-    # This goal is impossible to satisfy, let the caller know
+            return ()
+    # Get the initial state from the current plan
+    initial_state = list(
+        filter(lambda sc: sc.term == Term(Semester.Summer, Year.Frosh), current_plan))
+    goal_conditions = make_unique(
+        goal_conditions)  # Remove duplicates in the goal conditions
+    goal = goal_conditions[0]  # Consider the first goal as the current goal
+    goal_info = course_descriptions[goal]  # Get its info
+    # Find the min height of the requirement tree for the current goal. It
+    # can't be placed in a semester before this.
+    min_height = minimum_tree_height(
+        course_descriptions, goal, initial_state, memo_table_for_tree_height)
+    # Calculate the current hours per semester
+    hours_per_term = get_hour_counts(current_plan)
+    # Make a dict that will be used as a memo table for the minimum_requirement_tree_height method. The memo table
+    # is used only while the plan remains the same
+    memo_table_for_current_plan = {}
+    # Check each possible term (excluding Summers) for non-higher-level requirements starting from the min_height until
+    # Spring of senior year. For higher level requirements, this doesn't matter because they can be scheduled any time
+    # and corrected after evaluation is complete, so we only try Spring Senior
+    # Year.
+    for term in (map(lambda i: height_to_term(i), range(min_height, 9)) if not is_higher_level_course_info(goal_info) else [Term(Semester.Spring, Year.Senior)]):
+        if int(goal_info.credits) + hours_per_term[term] > 18:  # Too many hours
+            continue
+        if term.semester.name not in goal_info.terms:  # Not offered in this term
+            continue
+        if goal in map(lambda op: op.course, current_plan):  # Course already taken
+            continue
+        if not is_higher_level_course_info(goal_info):  # Don't schedule in same sem or after course that uses the goal
+            violates_another = False
+            for op in current_plan:
+                if is_higher_level_course_info(op.courseInfo):
+                    continue
+                if term >= op.term and goal in op.clause:
+                    violates_another = True
+                    break
+            if violates_another:
+                continue
+        # Now we know scheduling the course is definitely possible...
+        next_operation = ScheduledCourse(
+            goal, goal_info, term, [])  # Construct an operator for the goal
+        next_plan = current_plan[
+            :]  # Create a copy of the current plan with the next operation in it
+        next_plan.append(next_operation)
+        # Sort the potential clauses so the easiest ones to fulfill are tried first. If there are no clauses, provide
+        # an empty clause to the for loop.
+        for i, dnf_clause in enumerate(sorted(goal_info.prereqs, key=lambda clause: max(clause, key=lambda req: minimum_tree_height(course_descriptions, req, current_plan, memo_table_for_current_plan))) if len(goal_info.prereqs) != 0 else [[]]):
+            if not is_higher_level_course_info(goal_info):  # Don't schedule in same sem or before a prerequisite course
+                violates_another = False
+                for op in current_plan:
+                    if is_higher_level_course_info(op.courseInfo):
+                        continue
+                    if op.term >= term and op.course in dnf_clause:
+                        violates_another = True
+                        break
+                if violates_another:
+                    continue
+            if i > 4:  # Too many tries. This prevents open electives from timing out. Will fix for the next submission.
+                break
+
+            next_operation.clause = dnf_clause  # Assign current dnf clause to the operator
+            dnf_clause = list(dnf_clause)
+                              # We need the properties of a list later on
+            # Build the next set of goal conditions, which is the goal conditions minus the goal plus the requirements
+            # of the goal's current dnf clause.
+            next_goal_conditions = goal_conditions[:]
+            next_goal_conditions.remove(goal)
+            # Put the dnf clause at the front, sorted by what's hardest first. Hard clause members define what the
+            # course layout should be, while easy ones can be fit in in the
+            # aftermath.
+            next_goal_conditions = list(sorted(remove_fulfilled(dnf_clause, current_plan), key=lambda x: -minimum_tree_height(
+                course_descriptions, x, current_plan, memo_table_for_current_plan))) + next_goal_conditions
+            result_plan = internal_scheduler(
+                course_descriptions, next_goal_conditions, next_plan, memo_table_for_tree_height)  # Recurse deeper
+            if not len(result_plan) == 0:  # Setting this goal as the operation didn't fail, return it
+                return result_plan
+            # Failing here means the next clause will be tried
+            # TODO: check for dnf clauses that are effectively equivalent and skip them, especially for open electives
     return ()
 
 
-def is_valid_plan(current_plan: List[CourseOperator]):
-    hour_counts = {term: 0 for term in ScheduledTerm}
-    for operator in current_plan:
-        hour_counts[operator.scheduledterm] += int(operator.credits)
-    for term, hours in hour_counts.items():
+def pad_to_12_hours(course_descriptions: Dict[Course, CourseInfo], plan: List[ScheduledCourse]):
+    courses_in_plan = list(map(lambda sc: sc.course, plan))
+    for term, hours in get_hour_counts(plan).items():
+        if 12 > hours > 0:
+            for course, courseinfo in course_descriptions.items():
+                if hours >= 12:
+                    break
+                if len(courseinfo.prereqs) > 0 or course in courses_in_plan or int(courseinfo.credits) + hours > 18:
+                    continue
+                plan.append(
+                    ScheduledCourse((course.program, course.designation), courseinfo, term, courseinfo.prereqs))
+                courses_in_plan.append(course)
+                hours += int(courseinfo.credits)
+    return plan
+
+
+# This method pushes higher level courses from the semester they're in to
+# the semester in which they're fulfilled
+def push_higher_levels(plan: List[ScheduledCourse]):
+    for i, hl_op in enumerate(plan):
+        if not is_higher_level_course_info(hl_op.courseInfo):  # Ignore non-higher-level courses
+            continue
+        keep_pushing = True
+        while keep_pushing and hl_op.term != Term(Semester.Spring, Year.Senior):  # Push upward
+            for clause in hl_op.courseInfo.prereqs:
+                if not any(req in (map(lambda op: op.course, filter(lambda op: op.term == hl_op.term, plan))) for req in clause):
+                    keep_pushing = False
+                    break
+            if keep_pushing:
+                hl_op.term = Term.initFromTermNo(
+                    hl_op.term.termNo + (1 if hl_op.term.semester == Semester.Fall else 2))
+        keep_pushing = True
+        while keep_pushing and hl_op.term != Term(Semester.Fall, Year.Frosh):  # Push downward
+            for clause in hl_op.courseInfo.prereqs:
+                if any(req in (map(lambda op: op.course, filter(lambda op: op.term == hl_op.term, plan))) for req in clause):
+                    keep_pushing = False
+                    break
+            if keep_pushing:
+                hl_op.term = Term.initFromTermNo(
+                    hl_op.term.termNo - (1 if hl_op.term.semester == Semester.Spring else 2))
+
+
+# This method removes already fulfilled courses from a dnf clause to
+# simplify it
+def remove_fulfilled(dnf_clause: List[Course], plan: List[ScheduledCourse]):
+    for op in plan:
+        if op.course in dnf_clause:
+            dnf_clause.remove(op.course)
+    return dnf_clause
+
+
+# Checks if the plan is under 18 hours. If not, there is a failure.
+def is_valid_plan(current_plan: List[ScheduledCourse]):
+    for term, hours in get_hour_counts(current_plan).items():
         if hours > 18:
             return False
     return True
 
 
-def remove_fulfilled_goals(revised_dnf_clause: List[Course], current_plan: List[CourseOperator]):
+# This method creates a dict mapping a term (excluding summer) to the # of
+# hours in it.
+def get_hour_counts(current_plan: List[ScheduledCourse]):
+    hour_counts = {height_to_term(i): 0 for i in range(1, 9)}
     for operator in current_plan:
-        if operator.effect in revised_dnf_clause:
-            revised_dnf_clause.remove(operator.effect)
-    return revised_dnf_clause
-
-
-def operator_possible(course_descriptions: Dict[Course, CourseInfo], current_plan: List[CourseOperator],
-                      next_operator: CourseOperator):
-    # Is the course available in the term next_operator schedules it for?
-    if not next_operator.scheduledterm.name.split("_")[0] in course_descriptions[next_operator.effect].terms:
-        print("Not offered in", next_operator.scheduledterm, course_descriptions[next_operator.effect].terms, next_operator)
-        return False
-
-    hours_in_term = int(next_operator.credits)
-    for operator in current_plan:
-        # Was the course in next_operator already taken?
-        if operator.effect == next_operator.effect:
-            print("Course already taken", next_operator)
-            return False
-        if operator.scheduledterm == next_operator.scheduledterm:
-            hours_in_term += int(operator.credits)
-
-        # Don't schedule a course in the same semester as its direct prerequisites or before them
-        # Don't schedule a course whose effect is a prerequisite of a course scheduled before it
-        # Higher level requirements don't count
-        if not is_higher_level_operator(next_operator) and not is_higher_level_operator(operator):
-            if operator.scheduledterm <= next_operator.scheduledterm and next_operator.effect in operator.pre:
-                print("Scheduling after course using it", next_operator)
-                return False
-            if operator.scheduledterm >= next_operator.scheduledterm and operator.effect in next_operator.pre:
-                print("Scheduling before prereq", next_operator)
-                return False
-
-    # Will adding this course exceed the hours limit?
-    if hours_in_term > 18:  # Too many hours in term
-        print("Too many hours", next_operator)
-        return False
-
-    # The operator has passed
-    return True
-
-
-def heuristic_distance(course_descriptions: Dict[Course, CourseInfo], dnf_clause: List[Course], initial_state:List[CourseUsable], goal_conditions: List[CourseHLCheck], current_plan: List[CourseOperator] ):  # maximin
-    h = 0
-    for req in dnf_clause:
-        req = Course(*req)
-        for course in list(map(lambda i: i.course, initial_state)) + list(map(lambda i: i.effect, current_plan)) + list(map(lambda i: i.course, goal_conditions)):
-            course = Course(*course)
-            if req.program == course.program or req == course or req in course_descriptions[course].prereqs or course in course_descriptions[req].prereqs:
-                h -= 1
-    return h
-
-
-def minimum_requirement_tree_height(course_descriptions: Dict[Course, CourseInfo], dnf_clause: List[Course]):  # maximin
-    if len(dnf_clause) == 0:
-        return 0
-
-    maximum = 0
-    for req in dnf_clause:  # dnf_clause was selected, find the tree length required for it to be fulfilled, (max)
-        lmin = 9
-        if len(course_descriptions[req].prereqs) == 0:
-            lmin = 0
-        for clause in course_descriptions[req].prereqs:  # find the length of the smallest clause for req
-            clause = list(clause)
-            sz = (1 if not is_higher_level_course(course_descriptions, req) else 0) + minimum_requirement_tree_height(course_descriptions, clause)
-            if sz < lmin:
-                lmin = sz
-        if lmin > maximum:
-            maximum = lmin
-    return maximum
-
-
-def push_higher_levels(course_descriptions: Dict[Course, CourseInfo], plan : List[CourseOperator]):
-    for i, hl_op in enumerate(plan):
-        if not is_higher_level_operator(hl_op):
+        if operator.term.semester is Semester.Summer:  # The scheduler doesn't handle summer yet
             continue
-        keep_pushing = True
-        while keep_pushing and hl_op.scheduledterm != ScheduledTerm.Spring_Senior:
-            for clause in course_descriptions[hl_op.effect].prereqs:
-                if not any(req in (map(lambda op: op.effect, filter(lambda op: op.scheduledterm == hl_op.scheduledterm, plan))) for req in clause):
-                    keep_pushing = False
-                    break
-            if keep_pushing:
-                hl_op = hl_op._replace(scheduledterm=ScheduledTerm(int(hl_op.scheduledterm) + 1))
-                plan[i] = hl_op
-        keep_pushing = True
-        while keep_pushing and hl_op.scheduledterm != ScheduledTerm.Fall_Frosh:
-            for clause in course_descriptions[hl_op.effect].prereqs:
-                if any(req in (map(lambda op: op.effect, filter(lambda op: op.scheduledterm == hl_op.scheduledterm, plan))) for req in clause):
-                    keep_pushing = False
-                    break
-            if keep_pushing:
-                hl_op = hl_op._replace(scheduledterm=ScheduledTerm(int(hl_op.scheduledterm) - 1))
-                plan[i] = hl_op
+        hour_counts[operator.term] += int(operator.courseInfo.credits)
+    return hour_counts
 
 
+# This method answers the question: how many semesters are needed to schedule myself and my prerequirements, given the
+# "initial_state"? The memotable is used to speed up lookup.
+def minimum_tree_height(course_descriptions: Dict[Course, CourseInfo], goal: Course, initial_state: List[ScheduledCourse], memo: Dict[Course, int]):
+    if goal in map(lambda sc: sc.course, initial_state):  # Already fulfilled, so no depth
+        return 0
+    if len(course_descriptions[goal].prereqs) == 0:  # Basic no req course, so only taking it requires a semester
+        return 1
+    if goal in memo:  # This has already been answered
+        return memo[goal]
+    # Calculate the minimax
+    goal_minimum = 20
+    for prereq_clause in course_descriptions[goal].prereqs:  # Find the clause that is easiest to fulfill
+        clause_maximum = 0
+        for req in prereq_clause:  # Identify the hardest part of the current clause, it is definitive of it
+            # Don't consider higher level goals to be a course.
+            # Recurse to check the height required to fulfill req.
+            subtree_height = (1 if not is_higher_level_course(course_descriptions, goal) else 0) + \
+                minimum_tree_height(
+                course_descriptions, req, initial_state, memo)
+            if subtree_height > clause_maximum:  # Local maximum
+                clause_maximum = subtree_height
+        if clause_maximum < goal_minimum:  # Global minimum
+            goal_minimum = clause_maximum
+    memo[goal] = goal_minimum  # Memoize
+    return goal_minimum  # Done!
+
+
+# Converts a term number, 1 to 8, to the applicable term. This is handling for the fact that the scheduler doesn't
+# consider summer terms.
+def height_to_term(height: int):
+    semester = Semester(((height + 1) % 2) + 1)  # Spring or Fall?
+    year = Year(int((height - 1) / 2))
+    return Term(semester, year)
+
+
+# This method makes the argument unique and returns it
+def make_unique(seq):
+    seen = set()
+    seen_add = seen.add
+    return [x for x in seq if not (x in seen or seen_add(x))]
+
+
+# This method checks if a course is higher level by credits.
 def is_higher_level_course(course_descriptions: Dict[Course, CourseInfo], course: Course):
-    return int(course_descriptions[course].credits) == 0
+        return int(course_descriptions[course].credits) == 0
 
 
-def is_higher_level_operator(operator: CourseOperator):
-    return int(operator.credits) == 0
+# This method checks if a course is higher level using the credits in its info.
+def is_higher_level_course_info(courseinfo: CourseInfo):
+    return int(courseinfo.credits) == 0
 
 
-def print_schedule(course_descriptions: Dict[Course, CourseInfo], plan: List[CourseOperator]):
-    schedule = {}
-    for term in ScheduledTerm:
-        schedule[term] = []
+# Convenience method for debugging purposes
+def print_schedule(plan: List[ScheduledCourse]):
+    schedule = {height_to_term(i): [] for i in range(1, 9)}
     for operator in plan:
-        schedule[operator.scheduledterm].append(operator)
-    for term in ScheduledTerm:
+        schedule[operator.term].append(operator)
+    for term in schedule:
         hours = 0
         for operator in schedule[term]:
-            hours += int(operator.credits)
-        print(term, hours, " [", end='')
+            hours += int(operator.courseInfo.credits)
+        print(term, hours, " [")
         for operator in schedule[term]:
-            if not is_higher_level_course(course_descriptions, operator.effect):
+            if not is_higher_level_course_info(operator.courseInfo):
                 print(operator, ",")
         print("]")
-
-
-COURSE_DICT = cd.create_course_dict()
-INITIAL_STATE = [Course('CS', '1101'), Course('JAPN', '1101')]
-GOAL_CONDITIONS = [Course('CS', 'major')]
-print(course_scheduler(COURSE_DICT, GOAL_CONDITIONS, INITIAL_STATE))

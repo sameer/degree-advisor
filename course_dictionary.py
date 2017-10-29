@@ -2,6 +2,10 @@ import re
 from collections import namedtuple
 from openpyxl import load_workbook
 
+Course = namedtuple('Course', 'program, designation')
+CourseInfo = namedtuple('CourseInfo', 'credits, terms, prereqs')
+
+
 def create_course_dict():
     """
     Creates a dictionary containing course info.
@@ -11,13 +15,11 @@ def create_course_dict():
     """
     wb = load_workbook('newcatalog.xlsx')
     catalog = wb.get_sheet_by_name('catalog')
-    Course = namedtuple('Course', 'program, designation')
-    CourseInfo = namedtuple('CourseInfo', 'credits, terms, prereqs')
     course_dict = {}
     for row in range(1, catalog.max_row + 1):
         key = Course(get_val(catalog, 'A', row), get_val(catalog, 'B', row))
         prereqs = tuple(tuple(get_split_course(prereq) for prereq in prereqs.split())
-                   for prereqs in none_split(get_val(catalog, 'E', row)))
+                        for prereqs in none_split(get_val(catalog, 'E', row)))
         val = CourseInfo(get_val(catalog, 'C', row), tuple(get_val(catalog, 'D', row).split()), prereqs)
         course_dict[key] = val
     return course_dict
@@ -40,6 +42,9 @@ def none_split(val):
 def get_val(catalog, col, row):
     """Returns the value of a cell."""
     return catalog[col + str(row)].value
+
+
+"""Use pprint instead?"""
 
 
 def print_dict(dict):
