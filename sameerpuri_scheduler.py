@@ -176,7 +176,7 @@ def internal_scheduler(course_descriptions: Dict[Course, CourseInfo], goal_condi
     # Sort the potential clauses so the easiest ones to fulfill are tried first. If there are no clauses, provide
     # an empty clause to the for loop.
     sorted_dnf_clauses = [[]]
-    if not is_higher_level_course_info(goal_info):
+    if len(goal_info.prereqs) != 0:
         sorted_dnf_clauses = sorted(goal_info.prereqs, key=lambda dnf_clause:
             sum(map(lambda dnf_clause_req:
                 minimum_tree_height(course_descriptions, dnf_clause_req, current_plan, memo_table_for_current_plan),
