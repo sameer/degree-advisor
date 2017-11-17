@@ -385,4 +385,4 @@ def print_schedule(plan: List[ScheduledCourse]):
         print("]")
 
 
-course_scheduler(cd.create_course_dict(), goal_conditions=[Course(program='CS', designation='major'), Course(program='JAPN', designation='2201')], initial_state=[])
+course_scheduler(cd.create_course_dict(), goal_conditions=[Course(program='CS', designation='major'), Course(program='ANTH', designation='4345'), Course(program='ARTS', designation='3600'), Course(program='ASTR', designation='3600'), Course(program='BME', designation='4500'), Course(program='BUS', designation='2300'), Course(program='CE', designation='3705'), Course(program='LAT', designation='3140'), Course(program='JAPN', designation='3891')], initial_state=[Course('CS', '1101')])
