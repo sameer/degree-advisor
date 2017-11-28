@@ -147,47 +147,75 @@ def internal_scheduler(course_descriptions: Dict[Course, CourseInfo], goal_condi
         if is_valid_plan(current_plan):  # If it's valid, return the plan, else return a failure
             return current_plan
         else:
+            print("Invalid complete plan")
             return ()
     # Get the initial state from the current plan
-    initial_state = list(
-        filter(lambda sc: sc.term == Term(Semester.Summer, Year.Frosh), current_plan))
-    goal_conditions = make_unique(
-        goal_conditions)  # Remove duplicates in the goal conditions
+    initial_state = list(map(lambda sc: sc.course, list(filter(lambda sc: sc.term == Term(Semester.Summer, Year.Frosh), current_plan))))
+
+    # Remove duplicates in the goal conditions
+    goal_conditions = make_unique(goal_conditions)
+
+    # TODO: what 2 do
+    goal_conditions = list(sorted(goal_conditions, key=lambda g: minimum_tree_hours(course_descriptions, g, initial_state[:], {})))
     goal = goal_conditions[0]  # Consider the first goal as the current goal
     goal_info = course_descriptions[goal]  # Get its info
-    # Find the min height of the requirement tree for the current goal. It
-    # can't be placed in a semester before this.
-    goal_min_height = minimum_tree_height(
-        course_descriptions, goal, initial_state, memo_table_for_tree_height)
+
     # Calculate the current hours per semester
     hours_per_term = get_hour_counts(current_plan)
 
-    # Return a failure if there aren't enough hours available to schedule current goals
-    if 8*18 - sum(hours_per_term.values()) < sum(map(lambda cr: int(course_descriptions[cr].credits), goal_conditions)):
+    # Return a failure if there aren't enough hours available to schedule current goals. Assume 70%, a reasonable estimate.
+    number_hours_remaining = 0
+    number_hours_current_state = initial_state[:]
+    number_hours_dict = {}
+    for g in goal_conditions:
+        number_hours_remaining += minimum_tree_hours(course_descriptions, g, number_hours_current_state, number_hours_dict)
+    if 8 * 18 - sum(hours_per_term.values()) < number_hours_remaining * 0.7:
+        print("FAIL", number_hours_remaining)
         return ()
+    del number_hours_remaining, number_hours_current_state, number_hours_dict
+
+    # Find the min height of the requirement tree for the current goal. It
+    # can't be placed in a semester before this.
+    goal_min_height = minimum_tree_height(course_descriptions, goal, initial_state[:], {})
+
+    # Boost the min height based on filled semesters
+    for i, (term, hours) in enumerate(hours_per_term.items(), 1):
+        if i < goal_min_height:
+            continue
+        if i > goal_min_height:
+            break
+        if hours+int(goal_info.credits) > 18:
+            goal_min_height += 1
 
     if goal in map(lambda op: op.course, current_plan):  # Course already taken
-        return current_plan
-
-    # Make a dict that will be used as a memo table for the minimum_requirement_tree_height method. The memo table
-    # is used only while the plan remains the same
-    memo_table_for_current_plan = {}
+        goal_conditions.remove(goal)
+        return internal_scheduler(course_descriptions, goal_conditions, current_plan, memo_table_for_tree_height)
 
     # Sort the potential clauses so the easiest ones to fulfill are tried first. If there are no clauses, provide
     # an empty clause to the for loop.
-    sorted_dnf_clauses = [[]]
+    sorted_dnf_clauses = []
     if len(goal_info.prereqs) != 0:
-        sorted_dnf_clauses = sorted(goal_info.prereqs, key=lambda dnf_clause:
-            sum(map(lambda dnf_clause_req:
-                minimum_tree_height(course_descriptions, dnf_clause_req, current_plan, memo_table_for_current_plan),
-            dnf_clause))
-        )
+        dnf_clauses_to_hours = {}
+        for dnf_clause in goal_info.prereqs:
+            hours = 0
+            for dnf_clause_req in dnf_clause:
+                hours += minimum_tree_hours(course_descriptions, dnf_clause_req, initial_state[:], {})
+            dnf_clauses_to_hours[dnf_clause] = hours
+        dnf_clauses_min_hours = min(dnf_clauses_to_hours.values())
+        print("MINHRS", dnf_clauses_min_hours, "for", goal)
+        # sorted_dnf_clauses = sorted(goal_info.prereqs, key=lambda dnf_clause: dnf_clauses_to_hours[dnf_clause])
+        sorted_dnf_clauses = list(filter(lambda dnf_clause: dnf_clauses_to_hours[dnf_clause] == dnf_clauses_min_hours, goal_info.prereqs))
+    else:
+        sorted_dnf_clauses.append([])
+
+    print("For", goal, "looking at clauses", sorted_dnf_clauses)
 
     # Check each possible term (excluding Summers) for non-higher-level requirements starting from the min_height until
     # Spring of senior year. For higher level requirements, this doesn't matter because they can be scheduled any time
     # and corrected after evaluation is complete, so we only try Spring Senior
     # Year.
-    for term in (map(lambda i: height_to_term(i), reversed(range(goal_min_height, 9))) if not is_higher_level_course_info(goal_info) else [Term(Semester.Spring, Year.Senior)]):
+    terms_iter = iter(map(lambda i: height_to_term(i), range(goal_min_height, 9)) if not is_higher_level_course_info(goal_info) else [Term(Semester.Spring, Year.Senior)])
+    for term in terms_iter:
         if int(goal_info.credits) + hours_per_term[term] > 18:  # Too many hours
             continue
         if term.semester.name not in goal_info.terms:  # Not offered in this term
@@ -195,32 +223,37 @@ def internal_scheduler(course_descriptions: Dict[Course, CourseInfo], goal_condi
         if not is_higher_level_course_info(goal_info):  # Don't schedule in same sem or after course that uses the goal
             violates_another = False
             for op in current_plan:
-                if is_higher_level_course_info(op.courseInfo):
+                if is_higher_level_course_info(op.courseInfo) or op.term.semester == Semester.Summer:
                     continue
                 if term >= op.term and goal in op.clause:
+                    print("SCHEDULING", goal, "in", term, "After", op.course, "in", op.term)
+                    print_schedule(current_plan)
                     violates_another = True
                     break
             if violates_another:
-                continue
+                break  # Gone too far
         # Now we know scheduling the course is definitely possible...
         next_operation = ScheduledCourse(
             goal, goal_info, term, [])  # Construct an operator for the goal
-        next_plan = current_plan[
-            :]  # Create a copy of the current plan with the next operation in it
+        # Create a copy of the current plan with the next operation in it
+        next_plan = current_plan[:]
         next_plan.append(next_operation)
         for i, goal_dnf_clause in enumerate(sorted_dnf_clauses):
             if not is_higher_level_course_info(goal_info):  # Don't schedule in same sem or before a prerequisite course
                 violates_another = False
                 for op in current_plan:
-                    if is_higher_level_course_info(op.courseInfo):
+                    if is_higher_level_course_info(op.courseInfo) or op.term.semester == Semester.Summer:
                         continue
                     if op.term >= term and op.course in goal_dnf_clause:
+                        print("SCHEDULING", goal, "in", term, "Before", op.course, "in", op.term)
+                        print_schedule(current_plan)
                         violates_another = True
                         break
                 if violates_another:
                     continue
-            if i > 4:  # Too many tries. This prevents open electives from timing out. Will fix for the next submission.
-                break
+            # if i > 4:  # Too many tries. This prevents open electives from timing out. Will fix for the next submission.
+            #     print("Too many tries")
+            #     break
 
             next_operation.clause = goal_dnf_clause  # Assign current dnf clause to the operator
             goal_dnf_clause = list(goal_dnf_clause)
@@ -232,14 +265,16 @@ def internal_scheduler(course_descriptions: Dict[Course, CourseInfo], goal_condi
             # Put the dnf clause at the front, sorted by what's hardest first. Hard clause members define what the
             # course layout should be, while easy ones can be fit in in the
             # aftermath.
-            next_goal_conditions = list(sorted(remove_fulfilled(goal_dnf_clause, current_plan), key=lambda x: -minimum_tree_height(
-                course_descriptions, x, current_plan, memo_table_for_current_plan))) + next_goal_conditions
+            next_goal_conditions = list(sorted(remove_fulfilled(goal_dnf_clause, current_plan), key=lambda x: -minimum_tree_hours(
+                course_descriptions, x, initial_state[:], {}))) + next_goal_conditions
+            print("Try", goal, "in", term)
             result_plan = internal_scheduler(
                 course_descriptions, next_goal_conditions, next_plan, memo_table_for_tree_height, depth+1)  # Recurse deeper
             if not len(result_plan) == 0:  # Setting this goal as the operation didn't fail, return it
                 return result_plan
             # Failing here means the next clause will be tried
             # TODO: check for dnf clauses that are effectively equivalent and skip them, especially for open electives
+    print("Semesters exhausted for", goal)
     return ()
 
 
@@ -319,29 +354,64 @@ def get_hour_counts(current_plan: List[ScheduledCourse]):
 # TODO: add a memotable for the internal_scheduler so that if the same state is encountered (can this be checke) it returns immediately)
 # This method answers the question: how many semesters are needed to schedule myself and my prerequirements, given the
 # "initial_state"? The memotable is used to speed up lookup.
-def minimum_tree_height(course_descriptions: Dict[Course, CourseInfo], goal: Course, initial_state: List[ScheduledCourse], memo: Dict[Course, int]):
-    if goal in map(lambda sc: sc.course, initial_state):  # Already fulfilled, so no depth
+def minimum_tree_height(course_descriptions: Dict[Course, CourseInfo], goal: Course, initial_state: List[Course], memo: Dict[Course, int]):
+    if goal in initial_state:  # Already fulfilled, so no depth
         return 0
+    initial_state.append(goal)
     if len(course_descriptions[goal].prereqs) == 0:  # Basic no req course, so only taking it requires a semester
         return 1
     if goal in memo:  # This has already been answered
         return memo[goal]
     # Calculate the minimax
     goal_minimum = 20
+    goal_initial_state = initial_state
     for prereq_clause in course_descriptions[goal].prereqs:  # Find the clause that is easiest to fulfill
+        this_initial_state = initial_state[:]
         clause_maximum = 0
         for req in prereq_clause:  # Identify the hardest part of the current clause, it is definitive of it
             # Don't consider higher level goals to be a course.
             # Recurse to check the height required to fulfill req.
             subtree_height = (1 if not is_higher_level_course(course_descriptions, goal) else 0) + \
                 minimum_tree_height(
-                course_descriptions, req, initial_state, memo)
+                course_descriptions, req, this_initial_state, memo)
             if subtree_height > clause_maximum:  # Local maximum
                 clause_maximum = subtree_height
         if clause_maximum < goal_minimum:  # Global minimum
             goal_minimum = clause_maximum
+            goal_initial_state = this_initial_state
+    initial_state.clear()
+    initial_state += goal_initial_state
     memo[goal] = goal_minimum  # Memoize
     return goal_minimum  # Done!
+
+
+def minimum_tree_hours(course_descriptions: Dict[Course, CourseInfo], goal: Course, initial_state: List[Course], memo: Dict[Course, int]):
+    if goal in initial_state:  # Already fulfilled, so no hours
+        return 0
+    initial_state.append(goal)
+    if len(course_descriptions[goal].prereqs) == 0:  # Basic no req course, so only taking it requires a semester
+        return int(course_descriptions[goal].credits)
+    if goal in memo:  # This has already been answered
+        return memo[goal]
+    # Calculate the minisum
+    goal_minimum = 1000
+    goal_initial_state = initial_state
+    for prereq_clause in course_descriptions[goal].prereqs:  # Find the clause that is easiest to fulfill
+        this_initial_state = initial_state[:]
+        clause_total = int(course_descriptions[goal].credits)
+        for req in prereq_clause:  # Sum up the hours required for each req
+            # Don't consider higher level goals to be a course.
+            # Recurse to check the height required to fulfill req.
+            subtree_hours = minimum_tree_hours(course_descriptions, req, this_initial_state, memo)
+            clause_total += subtree_hours
+        if clause_total < goal_minimum:  # Global minimum
+            goal_minimum = clause_total
+            goal_initial_state = this_initial_state
+    initial_state.clear()
+    initial_state += goal_initial_state
+
+    memo[goal] = goal_minimum  # Memoize
+    return goal_minimum # Done!s
 
 
 # Converts a term number, 1 to 8, to the applicable term. This is handling for the fact that the scheduler doesn't
@@ -353,10 +423,11 @@ def height_to_term(height: int):
 
 
 # This method makes the argument unique and returns it
-def make_unique(seq):
-    seen = set()
-    seen_add = seen.add
-    return [x for x in seq if not (x in seen or seen_add(x))]
+def make_unique(seq: list):
+    return list(set(seq))
+    # seen = set()
+    # seen_add = seen.add
+    # return [x for x in seq if not (x in seen or seen_add(x))]
 
 
 # This method checks if a course is higher level by credits.
@@ -373,6 +444,8 @@ def is_higher_level_course_info(courseinfo: CourseInfo):
 def print_schedule(plan: List[ScheduledCourse]):
     schedule = {height_to_term(i): [] for i in range(1, 9)}
     for operator in plan:
+        if operator.term.semester == Semester.Summer:
+            continue
         schedule[operator.term].append(operator)
     for term in schedule:
         hours = 0
@@ -386,3 +459,6 @@ def print_schedule(plan: List[ScheduledCourse]):
 
 
 course_scheduler(cd.create_course_dict(), goal_conditions=[Course(program='CS', designation='major'), Course(program='ANTH', designation='4345'), Course(program='ARTS', designation='3600'), Course(program='ASTR', designation='3600'), Course(program='BME', designation='4500'), Course(program='BUS', designation='2300'), Course(program='CE', designation='3705'), Course(program='LAT', designation='3140'), Course(program='JAPN', designation='3891')], initial_state=[Course('CS', '1101')])
+# course_dict = cd.create_course_dict()
+
+# course_scheduler(course_dict, goal_conditions=[Course(program='CS', designation='major'), Course('JAPN', '3891')], initial_state=[Course('CS', '1101')])
