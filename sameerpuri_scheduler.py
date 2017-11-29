@@ -34,8 +34,9 @@
 from collections import namedtuple
 from enum import IntEnum
 from typing import Dict, List
+import pandas as pd
 import course_dictionary as cd
-
+import sameerpuri_matcher as spm
 
 # Some classes useful to the scheduler
 Course = namedtuple('Course', 'program, designation')
@@ -138,11 +139,10 @@ def course_scheduler(course_descriptions: Dict[Course, CourseInfo], goal_conditi
     # Pads semesters below 12 hours to 12 hours.
     result_plan = pad_to_12_hours(course_descriptions, result_plan)
     # Restructure the plan to match the specification
-    print_schedule(result_plan)
-    course_dict = {operator.course: CourseInfo(operator.courseInfo.credits, (
-        operator.term.semester.name, operator.term.year.name), operator.courseInfo.prereqs) for operator in result_plan}
+    schedule_dict = {operator.course: CourseInfo(operator.courseInfo.credits, Term(
+        operator.term.semester, operator.term.year), operator.courseInfo.prereqs) for operator in result_plan}
     # Done!
-    return course_dict
+    return schedule_dict
 
 
 def internal_scheduler(course_descriptions: Dict[Course, CourseInfo], goal_conditions: List[Course], current_plan: List[ScheduledCourse], memo_table_for_tree_height: Dict[Course, int], depth = 0):
@@ -341,10 +341,6 @@ def get_hour_counts(current_plan: List[ScheduledCourse]):
     return hour_counts
 
 
-# TODO: make a double level sort -- first sort by the depth, then sort by the number of hours required
-# TODO: prune clauses that are effectively equivalent i.e. for open electives, etc.
-# TODO: don't sort all goals because that destroys discovering the wrongness of something early on and not knowing where it came from because we can know where it came from by calling a parent method
-# TODO: add a memotable for the internal_scheduler so that if the same state is encountered (can this be checke) it returns immediately)
 # This method answers the question: how many semesters are needed to schedule myself and my prerequirements, given the
 # "initial_state"? The memotable is used to speed up lookup.
 def minimum_tree_height(course_descriptions: Dict[Course, CourseInfo], goal: Course, initial_state: List[Course], memo: Dict[Course, int]):
@@ -451,7 +447,29 @@ def print_schedule(plan: List[ScheduledCourse]):
         print("]")
 
 
-# course_scheduler(cd.create_course_dict(), goal_conditions=[Course(program='CS', designation='major'), Course(program='ANTH', designation='4345'), Course(program='ARTS', designation='3600'), Course(program='ASTR', designation='3600'), Course(program='BME', designation='4500'), Course(program='BUS', designation='2300'), Course(program='CE', designation='3705'), Course(program='LAT', designation='3140'), Course(program='JAPN', designation='3891')], initial_state=[Course('CS', '1101')])
-course_dict = cd.create_course_dict()
+if __name__ == '__main__':
+    course_dict: Dict[Course, CourseInfo] = cd.create_course_dict()
+    schedule_dict = course_scheduler(course_dict, goal_conditions=[Course(program='CS', designation='major'), Course('JAPN', '3891')], initial_state=[Course('CS', '1101')])
 
-course_scheduler(course_dict, goal_conditions=[Course(program='CS', designation='major'), Course('JAPN', '3891')], initial_state=[Course('CS', '1101')])
+    df = pd.DataFrame.from_dict(schedule_dict, orient='index')
+
+    course_desc_dict: Dict[Course, spm.CourseDesc] = spm.create_course_desc_dict(course_dict)
+    course_names: List[str] = list()
+    course_sums: List[str] = list()
+    for course in schedule_dict.keys():
+        if course in course_desc_dict:
+            desc: spm.CourseDesc = course_desc_dict[course]
+            course_names.append(desc.name)
+            course_sums.append(desc.summary)
+        else:
+            course_sums.append('')
+            course_names.append('')
+    df['name'] = course_names
+    df['summary'] = course_sums
+
+    df['course'] = df.index
+    df = df.sort_values(by=['terms','course'], axis='index')
+    del df['course']
+    del df['prereqs']
+    pd.set_option('display.max_colwidth', -1)
+    print(df.to_html(justify='center'))
