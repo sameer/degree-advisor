@@ -1,0 +1,36 @@
+{% extends "skeleton.html" %}
+{% block body %}
+    <div class="col-3">
+        <form method="post" enctype="multipart/form-data">
+            <div class="form-group">
+                <label class="form-label" for="program">Program</label>
+                <input class="form-input" type="text" id='program' name="program" placeholder="CS">
+                <label class="form-label" for="designation">Designation</label>
+                <input class="form-input" type="text" id='designation' name="designation" placeholder="1101">
+            </div>
+            <div class="form-group">
+                <button class="btn btn-primary" type="submit" value="Submit">Submit</button>
+            </div>
+        </form>
+    </div>
+    <br/>
+    <div class="col-3">
+        {% if error is not none %}
+            <span class="label label-error">{{ error }}</span>
+        {% endif %}
+
+        {% if course_info is not none %}
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title h5">{{ course.program }}{{ course.designation }}</div>
+                    <div class="card-subtitle">{{ course_info.name }} ({{ course_info.formerly }})</div>
+                </div>
+                <div class="card-body">
+                    {{ course_info.summary }} {{ course_info.creditbracket }}
+                </div>
+                <div class="card-footer">
+                </div>
+            </div>
+        {% endif %}
+    </div>
+{% endblock %}

@@ -37,7 +37,8 @@ from typing import Dict, List
 import pandas as pd
 import course_dictionary as cd
 import sameerpuri_matcher as spm
-import sameerpuri_recommender as spr
+if __name__ == '__main__':
+    import sameerpuri_recommender as spr
 
 # Some classes useful to the scheduler
 Course = namedtuple('Course', 'program, designation')
@@ -127,7 +128,7 @@ class ScheduledCourse:
         return "course is %s, term is %s, pre is %s" % (self.course, self.term, self.clause)
 
 
-def course_scheduler(course_descriptions: Dict[Course, CourseInfo], goal_conditions: List[Course], initial_state: List[Course]):
+def course_scheduler(course_descriptions: Dict[Course, CourseInfo], goal_conditions: List[Course], initial_state: List[Course]) -> Dict[Course, CourseInfo]:
     # Run the internal scheduler, considering the initial state as part of an
     # already scheduled plan
     result_plan = internal_scheduler(course_descriptions, goal_conditions, list(

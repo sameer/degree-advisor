@@ -1,0 +1,44 @@
+{% extends "skeleton.html" %}
+{% block body %}
+    <div class="col-3">
+        <form method="post" enctype="multipart/form-data">
+            <div class="form-group">
+                <label class="form-label" for="num">Number of Recommendations Desired</label>
+                <input class="form-input" type="number" id='num' name="num" placeholder="1">
+                <label class="form-label" for="courses">Courses you've liked</label>
+                <textarea class="form-input" id='courses' name="courses" rows="3"
+                          placeholder="CS 1101;CS 3251;CS 4260"></textarea>
+            </div>
+            <div class="form-group">
+                <button class="btn btn-primary" type="submit" value="Submit">Submit</button>
+            </div>
+        </form>
+    </div>
+    <br/>
+    <div class="col-6">
+        {% if error is not none %}
+            <span class="label label-error">{{ error }}</span>
+        {% endif %}
+
+        {% if recommendation_list is not none %}
+            {% for course, similarity in recommendation_list %}
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title h5">
+                            {{ course.program }}{{ course.designation }} {{ course_desc_dict[course].name }}
+                            ({{ course_desc_dict[course].formerly }})
+                        </div>
+                        <div class="card-subtitle">
+                            {{ similarity }}
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        {{ course_desc_dict[course].summary }} <br/> {{ course_desc_dict[course].credits }} Hours
+                    </div>
+                    <div class="card-footer">
+                    </div>
+                </div>
+            {% endfor %}
+        {% endif %}
+    </div>
+{% endblock %}

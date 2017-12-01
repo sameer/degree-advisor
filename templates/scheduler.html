@@ -1,0 +1,43 @@
+{% extends "skeleton.html" %}
+{% block body %}
+    <div class="col-3">
+        <form method="post" enctype="multipart/form-data">
+            <div class="form-group">
+                <label class="form-label" for="initial_state">Courses you've taken</label>
+                <textarea class="form-input" id='initial_state' name="initial_state" rows="3"
+                          placeholder="CS 1101;CS 3251;CS 4260"></textarea>
+                <label class="form-label" for="goal_conditions">Courses you'd like to complete</label>
+                <textarea class="form-input" id='goal_conditions' name="goal_conditions" rows="3"
+                          placeholder="CS 1101;CS 3251;CS 4260"></textarea>
+            </div>
+            <div class="form-group">
+                <button class="btn btn-primary" type="submit" value="Submit">Submit</button>
+            </div>
+        </form>
+    </div>
+    <br/>
+    <div class="col-6">
+        {% if error is not none %}
+            <span class="label label-error">{{ error }}</span>
+        {% endif %}
+
+        {% if result_plan is not none %}
+            {% for course, course_info in result_plan %}
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title h5">
+                            {{ course[0] }}{{ course[1] }} {{ course_desc_dict[course].name if course in course_desc_dict else '' }}</div>
+                        <div class="card-subtitle">
+                            {{ course_info.terms }}
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        {{ course_desc_dict[course].summary if course in course_desc_dict else '' }} <br/> {{ course_info.credits }} Hours
+                    </div>
+                    <div class="card-footer">
+                    </div>
+                </div>
+            {% endfor %}
+        {% endif %}
+    </div>
+{% endblock %}

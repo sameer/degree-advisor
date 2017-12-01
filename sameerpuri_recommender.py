@@ -1,10 +1,11 @@
 from pprint import pprint
-from typing import List, Dict
+from typing import List, Dict, Tuple
 import spacy
-import numpy as np
+from spacy import displacy
 
 import course_dictionary as cd
 import sameerpuri_matcher as spm
+from pathlib import Path
 
 course_infos: Dict[cd.Course, cd.CourseInfo] = cd.create_course_dict()
 course_descs: Dict[cd.Course, spm.CourseDesc] = spm.create_course_desc_dict(course_infos)
@@ -29,7 +30,7 @@ def recommend_courses_using_search_text(search_text: str, num: int) -> List:
     return list(map(lambda flt: text_similarities_dict[flt], text_similarities[:num]))
 
 
-def recommend_courses_using_liked_courses(courses_liked: List[cd.Course], num: int) -> List:
+def recommend_courses_using_liked_courses(courses_liked: List[cd.Course], num: int) -> List[Tuple]:
     course_similarity_dict: Dict[cd.Course, float] = {}
     for crs in course_descs.keys():
         if crs not in courses_liked:
@@ -48,9 +49,10 @@ def recommend_courses_using_liked_courses(courses_liked: List[cd.Course], num: i
 
 if __name__ == '__main__':
     print('*** Course Recommender ***')
+
     while True:
         try:
-            print("1: Search using liked courses\n2: Search using keywords")
+            print("1: Search using liked courses\n2: Search using keywords\n3: Render course tree")
             opt: int = int(input("Option: "))
             if opt == 1:
                 got: str = input('Input # of desired results followed by semicolon separated courses you liked: ')
@@ -62,16 +64,22 @@ if __name__ == '__main__':
                     courses.append(cd.Course(course_split[0], course_split[1]))
                 recommendation_list = recommend_courses_using_liked_courses(courses, n)
                 pprint(recommendation_list)
-            else:
+
+            elif opt == 2:
                 got: str = input('Input # of desired results, a semicolon, and search text: ')
                 gotargs: List[str] = got.split(';')
                 n: int = int(gotargs[0])
                 recommendation_list = recommend_courses_using_search_text(gotargs[1], n)
                 pprint(recommendation_list)
-                pass
+
+            elif opt == 3:
+                got: str = input('Input course to generate an SVG tree for: ')
+                gotargs: List[str] = got.split(' ')
+                course: cd.Course = cd.Course(gotargs[0], gotargs[1])
+                with Path(course.program + course.designation + '.svg').open('w+', encoding='utf-8') as svg:
+                    svg.write(displacy.render(course_nlp_descs[course], style='dep', options={'compact': True, 'bg': 'white', 'color': 'black', 'font': 'DejaVu Sans Mono'}))
 
         except Exception as e:
             print('Failed:', e)
 
 # 20;CS 2201;EECE 2116;SC 3260;EES 4760;CS 3251;CS 2231;CS 4260;CS 3281;CS 3270;BUS 2100;BUS 2400
-z
