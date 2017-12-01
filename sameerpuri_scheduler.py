@@ -37,6 +37,7 @@ from typing import Dict, List
 import pandas as pd
 import course_dictionary as cd
 import sameerpuri_matcher as spm
+import sameerpuri_recommender as spr
 
 # Some classes useful to the scheduler
 Course = namedtuple('Course', 'program, designation')
