@@ -11,6 +11,7 @@ from typing import Dict, List
 
 p = re.compile(r'([A-Z-]{2,5}[ ]\d{4}[WL]{0,1})[.] ([\w:\-,’\'\s]+?[.])[ ]{0,1}(?:[\[(](Formerly[\s\S]+?)[\])][.]{0,1}){0,1}([\S\s]*?[.]*) ([\[][\s\S]+?[\]])')
 
+fixcontinuednewlines = re.compile(r'([A-Za-z0-9])[\n]([a-z0-9])')
 CourseDesc = namedtuple('CourseDesc', ['name', 'formerly', 'summary', 'creditbracket'])
 
 
@@ -19,7 +20,10 @@ def create_course_desc_dict(course_dict: Dict[cd.Course, cd.CourseInfo]) -> Dict
 
     with open('ugad.txt', 'r') as ugad:
         # TODO: consider case where newline is a continuation of character from previous line
-        data = ugad.read().replace('\n', ' ')
+        data = ugad.read()
+        for match in fixcontinuednewlines.findall(data):
+            data = data.replace(match[0]+'\n'+match[1], match[0] + match[1])
+        data = data.replace('\n', ' ')
 
     course_desc_dict: Dict[cd.Course, CourseDesc] = {}
     for match in p.findall(data):
