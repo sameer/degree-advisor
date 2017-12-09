@@ -2,6 +2,9 @@ from flask import Flask, jsonify, render_template, request
 from typing import List, Tuple
 import course_dictionary as cd
 
+import click
+click.disable_unicode_literals_warning = True
+
 import sameerpuri_scheduler as sps
 import sameerpuri_matcher as spm
 import sameerpuri_recommender as spr

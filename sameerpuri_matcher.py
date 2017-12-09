@@ -18,6 +18,7 @@ def create_course_desc_dict(course_dict: Dict[cd.Course, cd.CourseInfo]) -> Dict
     data: str
 
     with open('ugad.txt', 'r') as ugad:
+        # TODO: consider case where newline is a continuation of character from previous line
         data = ugad.read().replace('\n', ' ')
 
     course_desc_dict: Dict[cd.Course, CourseDesc] = {}
