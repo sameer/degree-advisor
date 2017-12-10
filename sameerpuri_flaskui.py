@@ -62,7 +62,7 @@ def recommender():
             recommendation_list = spr.recommend_courses_using_liked_courses(courses, num)
         except KeyError as e:
             error = 'Course not found: ' + str(e)
-    return render_template('recommender.html', error=error, recommendation_list=recommendation_list, course_desc_dict=course_desc_dict)
+    return render_template('recommender.html', error=error, recommendation_list=recommendation_list, course_desc_dict=course_desc_dict, course_dict=course_dict)
 
 
 @app.route('/scheduler', methods=['GET', 'POST'])
@@ -86,3 +86,7 @@ def scheduler():
         except KeyError as e:
             error = 'Course not found: ' + str(e)
     return render_template('scheduler.html', error=error, result_plan=result_plan, course_desc_dict=course_desc_dict)
+
+@app.route('/about', methods=['GET'])
+def about():
+    return render_template('about.html')
